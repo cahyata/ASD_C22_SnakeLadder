@@ -43,6 +43,21 @@ public class SnakeDijkstraGUI extends JFrame {
             repaint();
         }
 
+        // --- FITUR BARU: Add & Remove Player untuk Animasi ---
+        public void addPlayer(int pId) {
+            if (!playersHere.contains(pId)) {
+                playersHere.add(pId);
+                repaint();
+            }
+        }
+
+        public void removePlayer(int pId) {
+            // Hapus object integer (bukan index)
+            playersHere.remove(Integer.valueOf(pId));
+            repaint();
+        }
+        // ----------------------------------------------------
+
         public static Color getPlayerColor(int id) {
             switch (id) {
                 case 1: return Color.decode("#FF5252"); // Merah
@@ -426,55 +441,23 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     // --- GENERATE PATH STEP-BY-STEP ---
-    // Fungsi ini membuat list urutan kotak yang harus dilewati (termasuk bounce/pantul)
     private List<Integer> generatePath(int start, int steps) {
         List<Integer> path = new ArrayList<>();
         int current = start;
-
-        // Arah: 1 (Maju), -1 (Mundur)
-        // Langkah positif = maju dulu, Langkah negatif = mundur dulu
-        int direction = steps > 0 ? 1 : -1;
-        int movesLeft = Math.abs(steps);
-
-        for (int i = 0; i < movesLeft; i++) {
-            current += direction;
-
-            // Logic Bounce di 64
-            if (current > 64) {
-                current = 64 - (current - 64); // Seharusnya 63
-                // Agar path benar (63->64->63), kita koreksi:
-                // Saat current tembus 65, kita masukkan 64 lalu balik arah?
-                // Tidak, loop ini per 1 langkah.
-                // Jika di 64 dan direction 1, step berikutnya harus -1.
-                // Mari kita perbaiki logic loop:
-
-                // Reset ke 64, lalu ubah direction untuk iterasi selanjutnya
-                current = 64;
-                // Ops, ini salah. Mari pakai cara manual "pantul"
-                // Kalau pos 64, next step pasti 63.
-            }
-        }
-
-        // RE-IMPLEMENTASI PATH GENERATION YANG LEBIH AKURAT
-        path.clear();
-        current = start;
         int moves = Math.abs(steps);
         int dir = steps > 0 ? 1 : -1;
 
         for (int i = 0; i < moves; i++) {
-            // Cek jika sudah di 64 dan mau maju -> harus mundur
             if (current == 64 && dir == 1) {
                 dir = -1; // Pantul
             }
-            // Cek jika di 1 dan mau mundur -> mentok (tetap di 1)
             if (current == 1 && dir == -1) {
-                // Tetap di 1, langkah terbuang
+                // Mentok
             } else {
                 current += dir;
             }
             path.add(current);
         }
-
         return path;
     }
 
@@ -507,7 +490,6 @@ public class SnakeDijkstraGUI extends JFrame {
         // 2. Start Animation Sequence
         animateSequence(currentPlayer, currentPos, movementPath, 0, () -> {
 
-            // Setelah sampai di kotak terakhir dadu, cek Link/Shortcuts
             int finalDicePos = movementPath.isEmpty() ? currentPos : movementPath.get(movementPath.size()-1);
             String logMsg = "P" + currentPlayer + ": " + currentPos + " -> " + finalDicePos;
 
@@ -530,7 +512,6 @@ public class SnakeDijkstraGUI extends JFrame {
 
             if (linkActivated) {
                 // Animasi Lompat Link (Langsung)
-                // Beri jeda sedikit
                 javax.swing.Timer delay = new javax.swing.Timer(500, e -> {
                     ((javax.swing.Timer)e.getSource()).stop();
                     animateMove(currentPlayer, finalDicePos, actualFinalPos, () -> {
@@ -545,7 +526,6 @@ public class SnakeDijkstraGUI extends JFrame {
         });
     }
 
-    // Rekursif untuk menjalankan animasi langkah demi langkah dari List path
     private void animateSequence(int playerId, int currentVisPos, List<Integer> path, int index, Runnable onComplete) {
         if (index >= path.size()) {
             onComplete.run();
@@ -554,14 +534,11 @@ public class SnakeDijkstraGUI extends JFrame {
 
         int nextTarget = path.get(index);
 
-        // Panggil animasi 1 langkah
         animateMove(playerId, currentVisPos, nextTarget, () -> {
-            // Setelah 1 langkah selesai, lanjut langkah berikutnya
             animateSequence(playerId, nextTarget, path, index + 1, onComplete);
         });
     }
 
-    // Engine Animasi (1 Langkah / Lompatan)
     private void animateMove(int playerId, int startId, int endId, Runnable onComplete) {
         if (startId == endId) { onComplete.run(); return; }
 
@@ -569,11 +546,13 @@ public class SnakeDijkstraGUI extends JFrame {
         GradientPanel endPanel = panelMap.get(endId);
         if (startPanel == null || endPanel == null) { onComplete.run(); return; }
 
+        // --- HAPUS DARI KOTAK ASAL ---
+        startPanel.removePlayer(playerId);
+        // -----------------------------
+
         Point pStart = SwingUtilities.convertPoint(startPanel, startPanel.getWidth()/2, startPanel.getHeight()/2, animationPanel);
         Point pEnd = SwingUtilities.convertPoint(endPanel, endPanel.getWidth()/2, endPanel.getHeight()/2, animationPanel);
 
-        // SETTING KECEPATAN:
-        // Frames = 50, Delay = 10ms => Total 500ms (0.5 detik) per kotak
         final int frames = 50;
         final int delay = 10;
 
@@ -584,8 +563,6 @@ public class SnakeDijkstraGUI extends JFrame {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 currentFrame++;
                 float t = (float) currentFrame / frames;
-                // Linear interpolation (t) atau Smooth (t*t*(3-2t))
-                // Untuk pergerakan kotak per kotak, linear kadang lebih enak dilihat, tapi smooth juga oke.
                 t = t * t * (3f - 2f * t);
 
                 int curX = (int) (pStart.x + (pEnd.x - pStart.x) * t);
@@ -595,8 +572,12 @@ public class SnakeDijkstraGUI extends JFrame {
 
                 if (currentFrame >= frames) {
                     ((javax.swing.Timer)e.getSource()).stop();
-                    // Jangan stopAnimation() total di sini agar bidak tidak kedip antar langkah
-                    // Kita biarkan animationPanel menggambar di posisi terakhir
+
+                    // --- TAMBAH KE KOTAK TUJUAN ---
+                    endPanel.addPlayer(playerId);
+                    animationPanel.stopAnimation();
+                    // ------------------------------
+
                     onComplete.run();
                 }
             }
@@ -605,10 +586,10 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     private void finalizeTurn(int player, int finalPos, Stack<Integer> stack, String log) {
-        animationPanel.stopAnimation(); // Selesai semua animasi, bersihkan overlay
+        animationPanel.stopAnimation();
         stack.push(finalPos);
         historyArea.append(log + "\n");
-        updatePlayerGraphics(); // Gambar posisi statis permanen
+        updatePlayerGraphics();
 
         if (finalPos == 64) {
             JOptionPane.showMessageDialog(this, "PLAYER " + player + " WINS!");
