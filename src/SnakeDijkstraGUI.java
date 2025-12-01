@@ -1,904 +1,755 @@
 import javax.swing.*;
+import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.border.MatteBorder;
 import java.awt.*;
-import java.awt.event.ActionListener;
-import java.awt.event.KeyEvent;
+import java.awt.event.*;
 import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class SnakeDijkstraGUI extends JFrame {
 
     // ==========================================
-    // 1. CLASS NODE (Logika)
+    // 1. CONFIG & THEME
     // ==========================================
-    private static class Node {
-        int id;
-        int row, col;
-        int pointValue;
+    public static class UITheme {
+        public static final Color BG_DARK = Color.decode("#1E1E2E");
+        public static final Color BG_PANEL = Color.decode("#252538");
+        public static final Color TEXT_MAIN = Color.decode("#CDD6F4");
+        public static final Color TEXT_SUB = Color.decode("#A6ADC8");
+        public static final Color ACCENT = Color.decode("#FAB387");
+        public static final Color BUTTON_GREEN = Color.decode("#A6E3A1");
+        public static final Color BUTTON_RED = Color.decode("#F38BA8");
+        public static final Color BUTTON_BLUE = Color.decode("#89B4FA");
 
-        public Node(int id, int row, int col) {
-            this.id = id;
-            this.row = row;
-            this.col = col;
-            this.pointValue = (int)(Math.random() * 3) + 1;
+        public static void applyTheme() {
+            UIManager.put("Panel.background", BG_PANEL);
+            UIManager.put("Label.foreground", TEXT_MAIN);
+            UIManager.put("OptionPane.background", BG_PANEL);
+            UIManager.put("OptionPane.messageForeground", TEXT_MAIN);
+            UIManager.put("TextField.background", BG_DARK);
+            UIManager.put("TextField.foreground", Color.WHITE);
+            UIManager.put("TextField.caretForeground", Color.WHITE);
+            UIManager.put("Button.background", Color.WHITE);
         }
     }
 
     // ==========================================
-    // 2. HELPER FONT LOADER
+    // 2. HIGH SCORE MANAGER (FILE I/O)
     // ==========================================
-    public static class AppFonts {
-        public static Font REGULAR;
-        public static Font BOLD;
-        public static Font MONO;
+    public static class HighScoreManager {
+        private static final String FILE_NAME = "snake_highscores.properties";
+        private Properties scores = new Properties();
 
-        static {
-            REGULAR = new Font("Segoe UI", Font.PLAIN, 14);
-            BOLD    = new Font("Segoe UI", Font.BOLD, 14);
-            MONO    = new Font("Consolas", Font.PLAIN, 12);
-
-            loadCustomFont("Geist-Regular.ttf", Font.PLAIN, 14f, "REGULAR");
-            loadCustomFont("Geist-Bold.ttf", Font.BOLD, 14f, "BOLD");
-            loadCustomFont("GeistMono-Regular.ttf", Font.PLAIN, 12f, "MONO");
+        public HighScoreManager() {
+            loadScores();
         }
 
-        private static void loadCustomFont(String fileName, int style, float size, String type) {
-            try {
-                File fontFile = new File(fileName);
-                if (fontFile.exists()) {
-                    Font font = Font.createFont(Font.TRUETYPE_FONT, fontFile).deriveFont(style, size);
-                    if (type.equals("REGULAR")) REGULAR = font;
-                    else if (type.equals("BOLD")) BOLD = font;
-                    else if (type.equals("MONO")) MONO = font;
+        private void loadScores() {
+            try (FileInputStream fis = new FileInputStream(FILE_NAME)) {
+                scores.load(fis);
+            } catch (IOException e) {
+                // File belum ada, abaikan
+                System.out.println("Highscore file not found, creating new one.");
+            }
+        }
+
+        public int getScore(String name) {
+            return Integer.parseInt(scores.getProperty(name.toLowerCase(), "0"));
+        }
+
+        public void saveScore(String name, int newScore) {
+            String key = name.toLowerCase();
+            int currentBest = getScore(key);
+            if (newScore > currentBest) {
+                scores.setProperty(key, String.valueOf(newScore));
+                try (FileOutputStream fos = new FileOutputStream(FILE_NAME)) {
+                    scores.store(fos, "Snake Game High Scores");
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                // Ignore
             }
         }
     }
 
-    // ==========================================
-    // 3. SOUND MANAGER
-    // ==========================================
+    private static class Node {
+        int id, row, col, pointValue;
+        public Node(int id, int row, int col) {
+            this.id = id; this.row = row; this.col = col;
+            this.pointValue = (int)(Math.random() * 3) + 1;
+        }
+    }
+
+    public static class AppFonts {
+        public static Font REGULAR = new Font("Segoe UI", Font.PLAIN, 14);
+        public static Font BOLD    = new Font("Segoe UI", Font.BOLD, 14);
+        public static Font MONO    = new Font("Consolas", Font.PLAIN, 12);
+        static {
+            loadCustomFont("Geist-Regular.ttf", "REGULAR");
+            loadCustomFont("Geist-Bold.ttf", "BOLD");
+            loadCustomFont("GeistMono-Regular.ttf", "MONO");
+        }
+        private static void loadCustomFont(String fName, String type) {
+            try {
+                File f = new File(fName);
+                if (f.exists()) {
+                    Font font = Font.createFont(Font.TRUETYPE_FONT, f).deriveFont(type.equals("MONO")?12f:14f);
+                    if (type.equals("BOLD")) font = font.deriveFont(Font.BOLD);
+                    if (type.equals("REGULAR")) REGULAR = font; else if (type.equals("BOLD")) BOLD = font; else MONO = font;
+                }
+            } catch (Exception e) {}
+        }
+    }
+
     public static class SoundManager {
-        public static void play(String filename) {
+        public static void play(String fName) {
             new Thread(() -> {
                 try {
-                    File soundFile = new File(filename);
-                    if (soundFile.exists()) {
-                        javax.sound.sampled.AudioInputStream audioIn = javax.sound.sampled.AudioSystem.getAudioInputStream(soundFile);
+                    File f = new File(fName);
+                    if (f.exists()) {
                         javax.sound.sampled.Clip clip = javax.sound.sampled.AudioSystem.getClip();
-                        clip.open(audioIn);
+                        clip.open(javax.sound.sampled.AudioSystem.getAudioInputStream(f));
                         clip.start();
-                    } else {
-                        System.out.println("Info: File suara '" + filename + "' tidak ditemukan.");
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                } catch (Exception e) {}
             }).start();
         }
     }
 
     // ==========================================
-    // 4. CLASS GRADIENT PANEL
+    // 3. VISUAL COMPONENTS
     // ==========================================
+
+    private static class AnimatedBackgroundPanel extends JPanel {
+        private final List<Point> stars = new ArrayList<>();
+        private final Random rand = new Random();
+
+        public AnimatedBackgroundPanel() {
+            for(int i=0; i<50; i++) stars.add(new Point(rand.nextInt(1200), rand.nextInt(900)));
+            new javax.swing.Timer(100, e -> repaint()).start();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2 = (Graphics2D) g;
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            GradientPaint gp = new GradientPaint(0, 0, Color.decode("#0f2027"), getWidth(), getHeight(), Color.decode("#2c5364"));
+            g2.setPaint(gp); g2.fillRect(0, 0, getWidth(), getHeight());
+            g2.setColor(new Color(255, 255, 255, 10));
+            g2.fillOval(-50, -50, 300, 300); g2.fillOval(getWidth()-200, getHeight()-200, 400, 400);
+            g2.setColor(new Color(255,255,255, 100));
+            for(Point p : stars) {
+                g2.fillOval(p.x, p.y, 3, 3);
+                p.y -= 1; if(p.y < 0) p.y = getHeight();
+            }
+        }
+    }
+
     private static class GradientPanel extends JPanel {
-        private final Color centerColor;
-        private final Color edgeColor;
+        private final Color centerColor, edgeColor;
         private List<Integer> playersHere = new ArrayList<>();
         private int pointValue;
 
-        public GradientPanel(Color centerColor, Color edgeColor, int pointValue) {
-            this.centerColor = centerColor;
-            this.edgeColor = edgeColor;
-            this.pointValue = pointValue;
+        public GradientPanel(Color c, Color e, int p) {
+            this.centerColor = c; this.edgeColor = e; this.pointValue = p;
             setOpaque(false);
         }
-
-        public void setPlayersHere(List<Integer> players) {
-            this.playersHere.clear();
-            this.playersHere.addAll(players);
-            repaint();
-        }
-
-        public void addPlayer(int pId) {
-            if (!playersHere.contains(pId)) {
-                playersHere.add(pId);
-                repaint();
-            }
-        }
-
-        public void removePlayer(int pId) {
-            playersHere.remove(Integer.valueOf(pId));
-            repaint();
-        }
+        public void setPlayersHere(List<Integer> p) { playersHere.clear(); playersHere.addAll(p); repaint(); }
+        public void addPlayer(int p) { if(!playersHere.contains(p)) { playersHere.add(p); repaint(); } }
+        public void removePlayer(int p) { playersHere.remove(Integer.valueOf(p)); repaint(); }
 
         public static Color getPlayerColor(int id) {
             switch (id) {
-                case 1: return Color.decode("#FF5252");
-                case 2: return Color.decode("#448AFF");
-                case 3: return Color.decode("#69F0AE");
-                case 4: return Color.decode("#FFAB40");
+                case 1: return Color.decode("#FF5252"); case 2: return Color.decode("#448AFF");
+                case 3: return Color.decode("#69F0AE"); case 4: return Color.decode("#FFAB40");
                 default: return Color.GRAY;
             }
         }
 
         public static void drawPawnStatic(Graphics2D g2, int x, int y, int size, Color color, String label) {
-            g2.setColor(new Color(0, 0, 0, 60));
-            g2.fillOval(x + 3, y + 3, size, size);
-            g2.setColor(color);
-            g2.fillOval(x, y, size, size);
-            g2.setColor(Color.WHITE);
-            g2.setStroke(new BasicStroke(2.5f));
-            g2.drawOval(x, y, size, size);
-
-            g2.setFont(AppFonts.BOLD.deriveFont(11f));
-            g2.setColor(Color.WHITE);
+            g2.setColor(new Color(0,0,0,60)); g2.fillOval(x+2, y+2, size, size);
+            g2.setColor(color); g2.fillOval(x, y, size, size);
+            g2.setColor(new Color(255,255,255,150)); g2.setStroke(new BasicStroke(2f)); g2.drawOval(x, y, size, size);
+            g2.setFont(AppFonts.BOLD.deriveFont(10f)); g2.setColor(Color.WHITE);
             FontMetrics fm = g2.getFontMetrics();
-            int tx = x + (size - fm.stringWidth(label)) / 2;
-            int ty = y + (size - fm.getHeight()) / 2 + fm.getAscent();
-            g2.drawString(label, tx, ty);
+            g2.drawString(label, x+(size-fm.stringWidth(label))/2, y+(size-fm.getHeight())/2+fm.getAscent());
         }
 
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            Graphics2D g2d = (Graphics2D) g;
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            Graphics2D g2 = (Graphics2D) g;
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight();
 
-            int w = getWidth();
-            int h = getHeight();
+            RadialGradientPaint p = new RadialGradientPaint(new Point2D.Float(w/2f, h/2f), Math.max(w,h),
+                    new float[]{0.0f, 1.0f}, new Color[]{centerColor, edgeColor});
+            g2.setPaint(p); g2.fillRect(0, 0, w, h);
 
-            Point2D center = new Point2D.Float(w / 2.0f, h / 2.0f);
-            float radius = Math.max(w, h);
-            float[] dist = {0.0f, 1.0f};
-            Color[] colors = {centerColor, edgeColor};
-            RadialGradientPaint p = new RadialGradientPaint(center, radius, dist, colors);
-            g2d.setPaint(p);
-            g2d.fillRect(0, 0, w, h);
+            int ptS = 20, ptX = 4, ptY = h - 24;
+            g2.setColor(new Color(255, 215, 0)); g2.fillOval(ptX, ptY, ptS, ptS);
+            g2.setColor(new Color(184, 134, 11)); g2.setStroke(new BasicStroke(1f)); g2.drawOval(ptX, ptY, ptS, ptS);
+            g2.setColor(Color.BLACK); g2.setFont(AppFonts.BOLD.deriveFont(10f));
+            String pts = String.valueOf(pointValue);
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(pts, ptX+(ptS-fm.stringWidth(pts))/2, ptY+(ptS-fm.getHeight())/2+fm.getAscent()-2);
 
-            int ptSize = 20;
-            int ptX = 5;
-            int ptY = h - 25;
-            g2d.setColor(new Color(255, 215, 0));
-            g2d.fillOval(ptX, ptY, ptSize, ptSize);
-            g2d.setColor(new Color(184, 134, 11));
-            g2d.setStroke(new BasicStroke(1f));
-            g2d.drawOval(ptX, ptY, ptSize, ptSize);
-            g2d.setColor(Color.BLACK);
+            int size = w / 3; int margin = 6;
+            int[][] pos = {{margin, margin + 8}, {w - size - margin, margin + 8}, {margin, h - size - margin}, {w - size - margin, h - size - margin}};
 
-            g2d.setFont(AppFonts.BOLD.deriveFont(10f));
-
-            String ptStr = String.valueOf(pointValue);
-            FontMetrics fm = g2d.getFontMetrics();
-            g2d.drawString(ptStr, ptX + (ptSize - fm.stringWidth(ptStr))/2, ptY + (ptSize - fm.getHeight())/2 + fm.getAscent());
-
-            int pawnSize = w / 3;
-            int padding = 4;
-            int x1 = (w / 2) - pawnSize - padding; int y1 = (h / 2) - pawnSize - padding + 10;
-            int x2 = (w / 2) + padding;            int y2 = (h / 2) - pawnSize - padding + 10;
-            int x3 = (w / 2) - pawnSize - padding; int y3 = (h / 2) + padding + 5;
-            int x4 = (w / 2) + padding;            int y4 = (h / 2) + padding + 5;
-
-            for (int playerId : playersHere) {
-                Color c = getPlayerColor(playerId);
-                int px = 0, py = 0;
-                if(playerId == 1) { px = x1; py = y1; }
-                else if(playerId == 2) { px = x2; py = y2; }
-                else if(playerId == 3) { px = x3; py = y3; }
-                else if(playerId == 4) { px = x4; py = y4; }
-                drawPawnStatic(g2d, px, py, pawnSize, c, "P" + playerId);
+            for(int pid : playersHere) {
+                if(pid <= 4) drawPawnStatic(g2, pos[pid-1][0], pos[pid-1][1], size, getPlayerColor(pid), "P"+pid);
             }
         }
     }
 
-    // ==========================================
-    // 5. MAIN GUI CLASS
-    // ==========================================
+    private class AnimationPanel extends JPanel {
+        private boolean anim = false; private int pid, ax, ay;
+        public AnimationPanel() { setOpaque(false); }
+        public void updatePawn(int id, int x, int y) { anim = true; pid = id; ax = x; ay = y; repaint(); }
+        public void stop() { anim = false; repaint(); }
+        @Override protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            if(anim) {
+                Graphics2D g2 = (Graphics2D)g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int boxW = getWidth()/8; int sz = boxW / 3;
+                GradientPanel.drawPawnStatic(g2, ax-sz/2, ay-sz/2, sz, GradientPanel.getPlayerColor(pid), "P"+pid);
+            }
+        }
+    }
 
+    private class BoardDrawingPanel extends JPanel {
+        public BoardDrawingPanel(GridLayout l) { super(l); }
+        @Override public void paint(Graphics g) {
+            super.paint(g);
+            Graphics2D g2 = (Graphics2D) g;
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            for(Map.Entry<Integer, Integer> e : shortcuts.entrySet()) {
+                GradientPanel s = panelMap.get(e.getKey());
+                GradientPanel d = panelMap.get(e.getValue());
+                if(s!=null && d!=null) {
+                    Point p1 = SwingUtilities.convertPoint(s, s.getWidth()/2, s.getHeight()/2, this);
+                    Point p2 = SwingUtilities.convertPoint(d, d.getWidth()/2, d.getHeight()/2, this);
+                    drawLadder(g2, p1, p2);
+                }
+            }
+        }
+        private void drawLadder(Graphics2D g2, Point p1, Point p2) {
+            double dx = p2.x-p1.x, dy = p2.y-p1.y, dist = Math.sqrt(dx*dx+dy*dy);
+            if(dist<20) return;
+            double ux = dx/dist, uy = dy/dist, px = -uy*12, py = ux*12;
+            g2.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setColor(new Color(0,0,0,80));
+            g2.drawLine((int)(p1.x+px+2), (int)(p1.y+py+2), (int)(p2.x+px+2), (int)(p2.y+py+2));
+            g2.drawLine((int)(p1.x-px+2), (int)(p1.y-py+2), (int)(p2.x-px+2), (int)(p2.y-py+2));
+            g2.setColor(new Color(101,67,33));
+            g2.drawLine((int)(p1.x+px), (int)(p1.y+py), (int)(p2.x+px), (int)(p2.y+py));
+            g2.drawLine((int)(p1.x-px), (int)(p1.y-py), (int)(p2.x-px), (int)(p2.y-py));
+            g2.setStroke(new BasicStroke(4f));
+            for(double t=25; t<dist-10; t+=25) {
+                double cx = p1.x+ux*t, cy = p1.y+uy*t;
+                g2.setColor(new Color(0,0,0,80)); g2.drawLine((int)(cx+px+1), (int)(cy+py+2), (int)(cx-px+1), (int)(cy-py+2));
+                g2.setColor(new Color(160,112,66)); g2.drawLine((int)(cx+px), (int)(cy+py), (int)(cx-px), (int)(cy-py));
+            }
+        }
+    }
+
+    private class SportsScoreboardPanel extends JPanel {
+        private JPanel[] playerPanels;
+        private JLabel[] scoreLabels;
+        private JLabel[] nameLabels;
+        private JLabel[] highscoreLabels;
+
+        public SportsScoreboardPanel() {
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setBackground(UITheme.BG_PANEL); setOpaque(false);
+        }
+        public void init(int num, String[] names, HighScoreManager mgr) {
+            removeAll();
+            playerPanels = new JPanel[num]; scoreLabels = new JLabel[num];
+            nameLabels = new JLabel[num]; highscoreLabels = new JLabel[num];
+
+            JLabel title = new JLabel("LIVE SCORE");
+            title.setFont(AppFonts.BOLD.deriveFont(16f));
+            title.setForeground(UITheme.TEXT_SUB);
+            title.setAlignmentX(CENTER_ALIGNMENT);
+            add(title); add(Box.createRigidArea(new Dimension(0, 10)));
+            JPanel grid = new JPanel(new GridLayout(0, 2, 10, 10));
+            grid.setOpaque(false);
+
+            for(int i=0; i<num; i++) {
+                int pid = i+1;
+                JPanel p = new JPanel(new BorderLayout());
+                p.setBackground(UITheme.BG_DARK);
+                p.setBorder(new CompoundBorder(new LineBorder(GradientPanel.getPlayerColor(pid), 1, true), new EmptyBorder(5,10,5,10)));
+                p.setPreferredSize(new Dimension(130, 70));
+
+                // Name & Best
+                JPanel info = new JPanel(new GridLayout(2, 1));
+                info.setOpaque(false);
+                JLabel n = new JLabel(names[i]);
+                n.setFont(AppFonts.BOLD.deriveFont(13f)); n.setForeground(GradientPanel.getPlayerColor(pid));
+                JLabel best = new JLabel("Best: " + mgr.getScore(names[i]));
+                best.setFont(AppFonts.REGULAR.deriveFont(10f)); best.setForeground(Color.GRAY);
+                info.add(n); info.add(best);
+
+                JLabel s = new JLabel("0");
+                s.setFont(AppFonts.MONO.deriveFont(28f)); s.setForeground(Color.WHITE); s.setHorizontalAlignment(SwingConstants.RIGHT);
+
+                p.add(info, BorderLayout.WEST); p.add(s, BorderLayout.EAST);
+                playerPanels[i] = p; scoreLabels[i] = s; nameLabels[i] = n; highscoreLabels[i] = best;
+                grid.add(p);
+            }
+            add(grid); revalidate(); repaint();
+        }
+        public void updateScores(int[] scores) {
+            if(scoreLabels==null) return;
+            for(int i=0; i<scores.length && i<scoreLabels.length; i++) scoreLabels[i].setText(String.valueOf(scores[i]));
+        }
+        public void highlight(int pid) {
+            if(playerPanels==null) return;
+            for(int i=0; i<playerPanels.length; i++) playerPanels[i].setBackground(i==pid-1 ? UITheme.BG_DARK.brighter() : UITheme.BG_DARK);
+        }
+    }
+
+    // ==========================================
+    // 4. MAIN GUI & LOGIC
+    // ==========================================
     private static final int SIZE = 8;
     private Node[][] logicBoard = new Node[SIZE][SIZE];
     private Map<Integer, GradientPanel> panelMap = new HashMap<>();
-
     private int playerCount = 2;
+    private String[] playerNames; // Nama pemain
     private List<Stack<Integer>> allPlayerStacks = new ArrayList<>();
     private int[] playerScores;
     private Deque<Integer> turnQueue = new ArrayDeque<>();
-
     private Map<Integer, Integer> shortcuts = new HashMap<>();
     private Random random = new Random();
+    private HighScoreManager highScoreManager; // Highscore System
 
-    private JPanel mainContainer;
+    // UI Components
     private CardLayout cardLayout;
-    private JLayeredPane layeredGamePane;
-    private JPanel boardPanel;
+    private JPanel mainContainer, boardPanel;
     private AnimationPanel animationPanel;
-
-    private JLabel statusLabel;
-    private JLabel diceImageLabel;
-    private JLabel diceTextLabel;
+    private JLabel statusLabel, diceImageLabel, diceTextLabel;
     private JTextArea historyArea;
-    private JButton rollButton;
-    private JLabel scoresLabel;
+    private JButton rollButton, restartButton;
+    private SportsScoreboardPanel scoreboardPanel;
 
-    private final Color blueCenter = Color.decode("#E3F2FD");
-    private final Color blueEdge   = Color.decode("#BBDEFB");
-    private final Color creamCenter = Color.decode("#FFFDE7");
-    private final Color creamEdge   = Color.decode("#FFF9C4");
-    private final Color sidebarColor = Color.decode("#2C3E50");
-    private final Color accentColor  = Color.decode("#E67E22");
-
-    private final Color[] playerTextColors = {
-            Color.decode("#FF5252"), Color.decode("#448AFF"),
-            Color.decode("#69F0AE"), Color.decode("#FFAB40")
-    };
+    private final Color blueCenter = Color.decode("#E3F2FD"), blueEdge = Color.decode("#90CAF9");
+    private final Color creamCenter = Color.decode("#FFFDE7"), creamEdge = Color.decode("#FFF59D");
+    private final Color[] playerTextColors = {Color.decode("#FF5252"), Color.decode("#448AFF"), Color.decode("#69F0AE"), Color.decode("#FFAB40")};
 
     public SnakeDijkstraGUI() {
-        setTitle("Snake Game: High Win Rate Edition");
-        setSize(1200, 900);
+        UITheme.applyTheme();
+        highScoreManager = new HighScoreManager(); // Load scores
+        setTitle("Snake Game: Ultimate Edition");
+        setSize(1280, 900);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
         cardLayout = new CardLayout();
         mainContainer = new JPanel(cardLayout);
-
         mainContainer.add(createMenuPanel(), "MENU");
         mainContainer.add(createGamePanel(), "GAME");
-
         add(mainContainer);
         setLocationRelativeTo(null);
     }
 
-    private boolean isPrime(int num) {
-        if (num <= 1) return false;
-        for (int i = 2; i <= Math.sqrt(num); i++) {
-            if (num % i == 0) return false;
-        }
-        return true;
-    }
-
-    private int getPointOfNode(int id) {
-        for(int r=0; r<SIZE; r++){
-            for(int c=0; c<SIZE; c++){
-                if(logicBoard[r][c].id == id) return logicBoard[r][c].pointValue;
-            }
-        }
-        return 0;
-    }
-
-    private ImageIcon createDiceImage(int value, int size, Color color) {
-        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2 = img.createGraphics();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        g2.setColor(Color.WHITE);
-        g2.fillRoundRect(2, 2, size-4, size-4, 15, 15);
-
-        g2.setColor(color);
-        g2.setStroke(new BasicStroke(3));
-        g2.drawRoundRect(2, 2, size-4, size-4, 15, 15);
-
-        int dotSize = size / 5;
-        int mid = size / 2;
-        int left = size / 4;
-        int right = size * 3 / 4;
-
-        if (value % 2 != 0) {
-            g2.fillOval(mid - dotSize/2, mid - dotSize/2, dotSize, dotSize);
-        }
-        if (value >= 2) {
-            g2.fillOval(left - dotSize/2, left - dotSize/2, dotSize, dotSize);
-            g2.fillOval(right - dotSize/2, right - dotSize/2, dotSize, dotSize);
-        }
-        if (value >= 4) {
-            g2.fillOval(right - dotSize/2, left - dotSize/2, dotSize, dotSize);
-            g2.fillOval(left - dotSize/2, right - dotSize/2, dotSize, dotSize);
-        }
-        if (value == 6) {
-            g2.fillOval(left - dotSize/2, mid - dotSize/2, dotSize, dotSize);
-            g2.fillOval(right - dotSize/2, mid - dotSize/2, dotSize, dotSize);
-        }
-
-        g2.dispose();
-        return new ImageIcon(img);
-    }
-
-    // --- ANIMATION PANEL ---
-    private class AnimationPanel extends JPanel {
-        private boolean isAnimating = false;
-        private int animPlayerId;
-        private int animX, animY;
-
-        public AnimationPanel() {
-            setOpaque(false);
-        }
-
-        public void updatePawnPosition(int playerId, int x, int y) {
-            this.isAnimating = true;
-            this.animPlayerId = playerId;
-            this.animX = x;
-            this.animY = y;
-            repaint();
-        }
-
-        public void stopAnimation() {
-            this.isAnimating = false;
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            super.paintComponent(g);
-            if (isAnimating) {
-                Graphics2D g2 = (Graphics2D) g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                int cellWidth = getWidth() / SIZE;
-                int pawnSize = cellWidth / 3;
-                GradientPanel.drawPawnStatic(g2,
-                        animX - (pawnSize/2),
-                        animY - (pawnSize/2),
-                        pawnSize,
-                        GradientPanel.getPlayerColor(animPlayerId),
-                        "P" + animPlayerId);
-            }
-        }
-    }
-
-    // --- BOARD DRAWING PANEL ---
-    private class BoardDrawingPanel extends JPanel {
-        public BoardDrawingPanel(GridLayout layout) { super(layout); }
-
-        @Override
-        public void paint(Graphics g) {
-            super.paint(g);
-            Graphics2D g2 = (Graphics2D) g;
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            for (Map.Entry<Integer, Integer> entry : shortcuts.entrySet()) {
-                int startId = entry.getKey();
-                int endId = entry.getValue();
-                GradientPanel startPanel = panelMap.get(startId);
-                GradientPanel endPanel = panelMap.get(endId);
-
-                if (startPanel != null && endPanel != null) {
-                    Point p1 = SwingUtilities.convertPoint(startPanel, startPanel.getWidth()/2, startPanel.getHeight()/2, this);
-                    Point p2 = SwingUtilities.convertPoint(endPanel, endPanel.getWidth()/2, endPanel.getHeight()/2, this);
-
-                    drawRealisticLadder(g2, p1, p2);
-
-                    int r = 5;
-                    g2.setColor(new Color(101, 67, 33));
-                    g2.fillOval(p1.x - r, p1.y - r, r*2, r*2);
-                    g2.fillOval(p2.x - r, p2.y - r, r*2, r*2);
-                }
-            }
-        }
-
-        private void drawRealisticLadder(Graphics2D g2, Point p1, Point p2) {
-            double dx = p2.x - p1.x;
-            double dy = p2.y - p1.y;
-            double distance = Math.sqrt(dx * dx + dy * dy);
-            if (distance < 20) return;
-
-            double ux = dx / distance;
-            double uy = dy / distance;
-            double railWidthOffset = 12;
-            double px = -uy * railWidthOffset;
-            double py = ux * railWidthOffset;
-
-            Color woodDark = new Color(101, 67, 33);
-            Color woodLight = new Color(160, 112, 66);
-            Color shadow = new Color(0,0,0, 80);
-
-            g2.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(shadow);
-            g2.drawLine((int)(p1.x+px+2), (int)(p1.y+py+2), (int)(p2.x+px+2), (int)(p2.y+py+2));
-            g2.drawLine((int)(p1.x-px+2), (int)(p1.y-py+2), (int)(p2.x-px+2), (int)(p2.y-py+2));
-            g2.setColor(woodDark);
-            g2.drawLine((int)(p1.x+px), (int)(p1.y+py), (int)(p2.x+px), (int)(p2.y+py));
-            g2.drawLine((int)(p1.x-px), (int)(p1.y-py), (int)(p2.x-px), (int)(p2.y-py));
-
-            g2.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            double stepSize = 25;
-            for (double t = stepSize; t < distance - 10; t += stepSize) {
-                double cx = p1.x + ux * t;
-                double cy = p1.y + uy * t;
-                int lx = (int)(cx + px); int ly = (int)(cy + py);
-                int rx = (int)(cx - px); int ry = (int)(cy - py);
-
-                g2.setColor(shadow);
-                g2.drawLine(lx+1, ly+2, rx+1, ry+2);
-                g2.setColor(woodLight);
-                g2.drawLine(lx, ly, rx, ry);
-            }
-        }
-    }
-
     private JPanel createMenuPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(sidebarColor);
+        AnimatedBackgroundPanel p = new AnimatedBackgroundPanel();
+        p.setLayout(new GridBagLayout());
+        JPanel card = new JPanel();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBackground(new Color(30, 30, 46, 200));
+        card.setBorder(new CompoundBorder(new LineBorder(new Color(255,255,255,50), 1, true), new EmptyBorder(40, 60, 40, 60)));
 
-        JLabel title = new JLabel("DICE MASTER SNAKE");
-        title.setFont(AppFonts.BOLD.deriveFont(48f));
-        title.setForeground(Color.WHITE);
+        JLabel t = new JLabel("DICE MASTER"); t.setFont(AppFonts.BOLD.deriveFont(48f)); t.setForeground(UITheme.ACCENT); t.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel t2 = new JLabel("SNAKE & LADDER"); t2.setFont(AppFonts.BOLD.deriveFont(32f)); t2.setForeground(Color.WHITE); t2.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel s = new JLabel("Strategy Board Game"); s.setFont(AppFonts.REGULAR.deriveFont(16f)); s.setForeground(UITheme.TEXT_SUB); s.setAlignmentX(CENTER_ALIGNMENT);
 
-        JLabel subtitle = new JLabel("<html><center>Shortcut: Tekan ENTER untuk Roll Dadu!</center></html>");
-        subtitle.setFont(AppFonts.REGULAR.deriveFont(18f));
-        subtitle.setForeground(Color.LIGHT_GRAY);
+        JButton b = styleButton("START ADVENTURE", UITheme.BUTTON_GREEN, Color.BLACK);
+        b.setPreferredSize(new Dimension(200, 50)); b.setAlignmentX(CENTER_ALIGNMENT);
 
-        JButton startButton = styleButton("START NEW GAME", new Color(46, 204, 113));
-        startButton.setPreferredSize(new Dimension(250, 60));
+        b.addActionListener(e -> showPlayerSelectionDialog(count -> {
+            playerCount = count;
+            askPlayerNames(); // Minta nama dulu
+            initGameData(); updateGraphics();
+            cardLayout.show(mainContainer, "GAME");
+            boardPanel.repaint();
+            getRootPane().setDefaultButton(rollButton);
+            rollButton.requestFocusInWindow();
+        }));
 
-        startButton.addActionListener(e -> {
-            String[] options = {"2 Players", "3 Players", "4 Players"};
-            int choice = JOptionPane.showOptionDialog(this, "Pilih Jumlah Pemain:", "Setup Game",
-                    JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
-
-            if (choice != -1) {
-                playerCount = choice + 2;
-                initGameData();
-                updatePlayerGraphics();
-                cardLayout.show(mainContainer, "GAME");
-                boardPanel.repaint();
-
-                getRootPane().setDefaultButton(rollButton);
-                rollButton.requestFocusInWindow();
-            }
-        });
-
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 0; gbc.gridy = 0; gbc.insets = new Insets(0, 0, 10, 0);
-        panel.add(title, gbc);
-        gbc.gridy = 1; gbc.insets = new Insets(0, 0, 50, 0);
-        panel.add(subtitle, gbc);
-        gbc.gridy = 2;
-        panel.add(startButton, gbc);
-        return panel;
+        card.add(t); card.add(t2); card.add(Box.createRigidArea(new Dimension(0, 10)));
+        card.add(s); card.add(Box.createRigidArea(new Dimension(0, 40))); card.add(b);
+        p.add(card); return p;
     }
 
     private JPanel createGamePanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-
-        layeredGamePane = new JLayeredPane();
-        layeredGamePane.setLayout(new OverlayLayout(layeredGamePane));
-
-        animationPanel = new AnimationPanel();
-        layeredGamePane.add(animationPanel, JLayeredPane.PALETTE_LAYER);
-
+        JPanel p = new JPanel(new BorderLayout());
+        JLayeredPane lp = new JLayeredPane(); lp.setLayout(new OverlayLayout(lp));
+        animationPanel = new AnimationPanel(); lp.add(animationPanel, JLayeredPane.PALETTE_LAYER);
         boardPanel = new BoardDrawingPanel(new GridLayout(SIZE, SIZE));
-        boardPanel.setBorder(new LineBorder(sidebarColor, 5));
-        initializeLogicBoard();
-        initializeVisualBoard(boardPanel);
-        layeredGamePane.add(boardPanel, JLayeredPane.DEFAULT_LAYER);
+        boardPanel.setBorder(new LineBorder(UITheme.BG_PANEL, 5));
+        initBoardLogic(); initBoardVisual();
+        lp.add(boardPanel, JLayeredPane.DEFAULT_LAYER);
 
-        JPanel sidePanel = new JPanel();
-        sidePanel.setLayout(new BoxLayout(sidePanel, BoxLayout.Y_AXIS));
-        sidePanel.setPreferredSize(new Dimension(300, 0));
-        sidePanel.setBorder(new EmptyBorder(30, 20, 30, 20));
-        sidePanel.setBackground(sidebarColor);
+        JPanel side = new JPanel(); side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
+        side.setPreferredSize(new Dimension(320, 0)); side.setBorder(new EmptyBorder(30,20,30,20));
+        side.setBackground(UITheme.BG_PANEL);
 
-        statusLabel = new JLabel("PLAYER 1 TURN");
-        statusLabel.setFont(AppFonts.BOLD.deriveFont(24f));
-        statusLabel.setForeground(playerTextColors[0]);
-        statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        statusLabel = new JLabel("PLAYER 1 TURN"); statusLabel.setFont(AppFonts.BOLD.deriveFont(24f));
+        statusLabel.setForeground(playerTextColors[0]); statusLabel.setAlignmentX(CENTER_ALIGNMENT);
 
-        scoresLabel = new JLabel("Scores: P1(0) P2(0)");
-        scoresLabel.setFont(AppFonts.MONO.deriveFont(14f));
-        scoresLabel.setForeground(Color.ORANGE);
-        scoresLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        scoreboardPanel = new SportsScoreboardPanel(); scoreboardPanel.setAlignmentX(CENTER_ALIGNMENT);
 
-        diceImageLabel = new JLabel(createDiceImage(1, 80, Color.BLACK));
-        diceImageLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        diceImageLabel = new JLabel(createDiceImage(1, 100, Color.BLACK)); diceImageLabel.setAlignmentX(CENTER_ALIGNMENT);
+        diceTextLabel = new JLabel("Press Enter to Roll"); diceTextLabel.setFont(AppFonts.REGULAR.deriveFont(14f));
+        diceTextLabel.setForeground(UITheme.TEXT_MAIN); diceTextLabel.setAlignmentX(CENTER_ALIGNMENT);
 
-        diceTextLabel = new JLabel("Press Enter to Roll");
-        diceTextLabel.setFont(AppFonts.REGULAR.deriveFont(14f));
-        diceTextLabel.setForeground(Color.LIGHT_GRAY);
-        diceTextLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        rollButton = styleButton("ROLL DICE", accentColor);
-        rollButton.setAlignmentX(Component.CENTER_ALIGNMENT);
-        rollButton.setMaximumSize(new Dimension(250, 60));
+        rollButton = styleButton("ROLL DICE", UITheme.ACCENT, Color.BLACK);
+        rollButton.setAlignmentX(CENTER_ALIGNMENT); rollButton.setMaximumSize(new Dimension(280, 60));
         rollButton.addActionListener(e -> playTurn());
 
-        rollButton.setMnemonic(KeyEvent.VK_ENTER);
+        restartButton = styleButton("RESTART GAME", UITheme.BUTTON_RED, Color.BLACK);
+        restartButton.setAlignmentX(CENTER_ALIGNMENT); restartButton.setMaximumSize(new Dimension(280, 45));
+        restartButton.setFont(AppFonts.BOLD.deriveFont(14f));
+        restartButton.addActionListener(e -> showRestartConfirmDialog(() -> {
+            askPlayerNames(); // Reset names optional, but good for restart
+            initGameData(); updateGraphics(); boardPanel.repaint();
+        }));
 
-        historyArea = new JTextArea(10, 1);
-        historyArea.setEditable(false);
-        historyArea.setFont(AppFonts.MONO.deriveFont(12f));
-        historyArea.setBackground(new Color(44, 62, 80));
-        historyArea.setForeground(new Color(46, 204, 113));
-        historyArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        historyArea = new JTextArea(10, 1); historyArea.setEditable(false);
+        historyArea.setFont(AppFonts.MONO.deriveFont(12f)); historyArea.setBackground(new Color(30,30,46));
+        historyArea.setForeground(new Color(166,227,161)); historyArea.setBorder(BorderFactory.createEmptyBorder(10,10,10,10));
+        JScrollPane sp = new JScrollPane(historyArea);
+        sp.setBorder(BorderFactory.createTitledBorder(new LineBorder(Color.GRAY), "Game Log", 0, 0, AppFonts.BOLD.deriveFont(12f), Color.WHITE));
+        sp.setOpaque(false); sp.getViewport().setOpaque(false); sp.setAlignmentX(CENTER_ALIGNMENT);
 
-        JScrollPane scrollStack = new JScrollPane(historyArea);
-        scrollStack.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(Color.GRAY), "Game Log",
-                0, 0, AppFonts.BOLD.deriveFont(12f), Color.WHITE));
-        scrollStack.setOpaque(false);
-        scrollStack.getViewport().setOpaque(false);
-        scrollStack.setAlignmentX(Component.CENTER_ALIGNMENT);
+        side.add(statusLabel); side.add(Box.createRigidArea(new Dimension(0, 15)));
+        side.add(scoreboardPanel); side.add(Box.createRigidArea(new Dimension(0, 20)));
+        side.add(diceImageLabel); side.add(diceTextLabel); side.add(Box.createRigidArea(new Dimension(0, 20)));
+        side.add(rollButton); side.add(Box.createRigidArea(new Dimension(0, 10)));
+        side.add(restartButton); side.add(Box.createRigidArea(new Dimension(0, 20)));
+        side.add(sp);
 
-        sidePanel.add(statusLabel);
-        sidePanel.add(Box.createRigidArea(new Dimension(0, 5)));
-        sidePanel.add(scoresLabel);
-        sidePanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        sidePanel.add(diceImageLabel);
-        sidePanel.add(diceTextLabel);
-        sidePanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        sidePanel.add(rollButton);
-        sidePanel.add(Box.createRigidArea(new Dimension(0, 20)));
-        sidePanel.add(scrollStack);
-
-        panel.add(layeredGamePane, BorderLayout.CENTER);
-        panel.add(sidePanel, BorderLayout.EAST);
-
-        return panel;
+        p.add(lp, BorderLayout.CENTER); p.add(side, BorderLayout.EAST);
+        return p;
     }
 
-    private JButton styleButton(String text, Color bgColor) {
-        JButton btn = new JButton(text);
-        btn.setFont(AppFonts.BOLD.deriveFont(18f));
-        btn.setBackground(bgColor);
-        btn.setForeground(Color.WHITE);
-        btn.setFocusPainted(false);
-        btn.setBorderPainted(false);
-        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btn.setContentAreaFilled(false);
-        btn.setOpaque(true);
-        return btn;
+    private void askPlayerNames() {
+        playerNames = new String[playerCount];
+        for (int i = 0; i < playerCount; i++) {
+            String def = "Player " + (i + 1);
+            String input = (String) JOptionPane.showInputDialog(this,
+                    "Masukkan Nama Player " + (i + 1), "Player Name",
+                    JOptionPane.PLAIN_MESSAGE, null, null, def);
+            playerNames[i] = (input != null && !input.trim().isEmpty()) ? input.trim() : def;
+        }
     }
 
     private void initGameData() {
-        allPlayerStacks.clear();
-        playerScores = new int[playerCount];
-
-        for (int i = 0; i < playerCount; i++) {
-            Stack<Integer> s = new Stack<>();
-            s.push(1);
-            allPlayerStacks.add(s);
-            playerScores[i] = 0;
-        }
-        turnQueue.clear();
-        for (int i = 1; i <= playerCount; i++) {
-            turnQueue.add(i);
-        }
-        rollButton.setEnabled(true);
-        updateScoreLabel();
-
-        statusLabel.setText("PLAYER 1 TURN");
-        statusLabel.setForeground(playerTextColors[0]);
-        generateRandomLinks();
-
-        diceImageLabel.setIcon(createDiceImage(1, 80, Color.BLACK));
-    }
-
-    private void updateScoreLabel() {
-        StringBuilder sb = new StringBuilder("Scores: ");
+        allPlayerStacks.clear(); playerScores = new int[playerCount];
         for(int i=0; i<playerCount; i++) {
-            sb.append("P").append(i+1).append("(").append(playerScores[i]).append(") ");
+            Stack<Integer> s = new Stack<>(); s.push(1);
+            allPlayerStacks.add(s); playerScores[i] = 0;
         }
-        scoresLabel.setText(sb.toString());
+        turnQueue.clear(); for(int i=1; i<=playerCount; i++) turnQueue.add(i);
+        rollButton.setEnabled(true);
+
+        scoreboardPanel.init(playerCount, playerNames, highScoreManager); // Pass names & manager
+        scoreboardPanel.updateScores(playerScores);
+
+        historyArea.setText("Game Started!\n");
+        statusLabel.setText(playerNames[0].toUpperCase() + " TURN");
+        statusLabel.setForeground(playerTextColors[0]);
+        scoreboardPanel.highlight(1); genShortcuts();
+        diceImageLabel.setIcon(createDiceImage(1, 100, Color.BLACK));
+        diceTextLabel.setText("Roll to Start"); diceTextLabel.setForeground(UITheme.TEXT_MAIN);
     }
 
-    private void generateRandomLinks() {
+    private void genShortcuts() {
         shortcuts.clear();
-        while (shortcuts.size() < 5) {
-            int pos1 = random.nextInt(62) + 2;
-            int pos2 = random.nextInt(62) + 2;
-
-            if (pos1 == pos2) continue;
-
-            int start = Math.min(pos1, pos2);
-            int end = Math.max(pos1, pos2);
-
-            if (!shortcuts.containsKey(start) && !shortcuts.containsValue(start)) {
-                shortcuts.put(start, end);
-            }
+        while(shortcuts.size()<5) {
+            int a = random.nextInt(62)+2, b = random.nextInt(62)+2;
+            if(a!=b && !shortcuts.containsKey(Math.min(a,b)) && !shortcuts.containsValue(Math.min(a,b)))
+                shortcuts.put(Math.min(a,b), Math.max(a,b));
         }
     }
 
-    private void initializeLogicBoard() {
-        int idCounter = 1;
-        for (int r = SIZE - 1; r >= 0; r--) {
-            boolean leftToRight = (SIZE - 1 - r) % 2 == 0;
-            if (leftToRight) {
-                for (int c = 0; c < SIZE; c++) {
-                    logicBoard[r][c] = new Node(idCounter++, r, c);
-                }
-            } else {
-                for (int c = SIZE - 1; c >= 0; c--) {
-                    logicBoard[r][c] = new Node(idCounter++, r, c);
-                }
-            }
+    private void initBoardLogic() {
+        int id = 1;
+        for(int r=SIZE-1; r>=0; r--) {
+            boolean l2r = (SIZE-1-r)%2==0;
+            if(l2r) for(int c=0; c<SIZE; c++) logicBoard[r][c] = new Node(id++, r, c);
+            else for(int c=SIZE-1; c>=0; c--) logicBoard[r][c] = new Node(id++, r, c);
         }
     }
 
-    private void initializeVisualBoard(JPanel boardPanel) {
-        boardPanel.removeAll();
-        panelMap.clear();
-        for (int r = 0; r < SIZE; r++) {
-            for (int c = 0; c < SIZE; c++) {
-                Node node = logicBoard[r][c];
-                Color cCenter = ((r + c) % 2 == 0) ? blueCenter : creamCenter;
-                Color cEdge = ((r + c) % 2 == 0) ? blueEdge : creamEdge;
-
-                GradientPanel cell = new GradientPanel(cCenter, cEdge, node.pointValue);
-                cell.setLayout(new BorderLayout());
-                cell.setBorder(new MatteBorder(1, 1, 1, 1, Color.WHITE));
-
-                JLabel numLabel = new JLabel(String.valueOf(node.id));
-                numLabel.setFont(AppFonts.BOLD.deriveFont(14f));
-                numLabel.setForeground(new Color(80, 80, 80));
-                numLabel.setHorizontalAlignment(SwingConstants.RIGHT);
-                numLabel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 8));
-
-                cell.add(numLabel, BorderLayout.NORTH);
-                boardPanel.add(cell);
-                panelMap.put(node.id, cell);
+    private void initBoardVisual() {
+        boardPanel.removeAll(); panelMap.clear();
+        for(int r=0; r<SIZE; r++) {
+            for(int c=0; c<SIZE; c++) {
+                Node n = logicBoard[r][c];
+                Color bg = ((r+c)%2==0)? blueCenter : creamCenter;
+                Color bd = ((r+c)%2==0)? blueEdge : creamEdge;
+                GradientPanel p = new GradientPanel(bg, bd, n.pointValue);
+                p.setLayout(new BorderLayout()); p.setBorder(new MatteBorder(1,1,1,1,Color.WHITE));
+                JLabel l = new JLabel(String.valueOf(n.id));
+                l.setFont(AppFonts.BOLD.deriveFont(14f)); l.setForeground(new Color(80,80,80));
+                l.setHorizontalAlignment(SwingConstants.RIGHT); l.setBorder(BorderFactory.createEmptyBorder(6,0,0,8));
+                p.add(l, BorderLayout.NORTH); boardPanel.add(p); panelMap.put(n.id, p);
             }
         }
-    }
-
-    private List<Integer> generatePath(int start, int steps) {
-        List<Integer> path = new ArrayList<>();
-        int current = start;
-        int moves = Math.abs(steps);
-        int dir = steps > 0 ? 1 : -1;
-
-        for (int i = 0; i < moves; i++) {
-            if (current == 64 && dir == 1) {
-                dir = -1;
-            }
-            if (current == 1 && dir == -1) {
-                // Mentok
-            } else {
-                current += dir;
-            }
-            path.add(current);
-        }
-        return path;
     }
 
     private void playTurn() {
-        if (turnQueue.isEmpty()) return;
-
-        SoundManager.play("dice.wav");
-        rollButton.setEnabled(false);
-
-        // --- ANIMASI ROLL DADU ---
-        javax.swing.Timer rollTimer = new javax.swing.Timer(50, null);
-        final int[] rolls = {0};
-
-        rollTimer.addActionListener(e -> {
-            int randFace = random.nextInt(6) + 1;
-            // Saat animasi, dadu berwarna hitam (netral)
-            diceImageLabel.setIcon(createDiceImage(randFace, 80, Color.BLACK));
-            rolls[0]++;
-
-            if (rolls[0] >= 10) {
-                rollTimer.stop();
-                executeGameLogic();
-            }
+        if(turnQueue.isEmpty()) return;
+        SoundManager.play("dice.wav"); rollButton.setEnabled(false);
+        javax.swing.Timer t = new javax.swing.Timer(50, null);
+        final int[] f = {0};
+        t.addActionListener(e -> {
+            diceImageLabel.setIcon(createDiceImage(random.nextInt(6)+1, 100, Color.LIGHT_GRAY));
+            if(++f[0]>=10) { ((javax.swing.Timer)e.getSource()).stop(); execLogic(); }
         });
-        rollTimer.start();
+        t.start();
     }
 
-    private void executeGameLogic() {
-        int currentPlayer = turnQueue.pollFirst();
-        Stack<Integer> currentStack = allPlayerStacks.get(currentPlayer - 1);
-        int currentPos = currentStack.peek();
-        boolean startIsPrime = isPrime(currentPos);
+    private void execLogic() {
+        int pid = turnQueue.pollFirst();
+        Stack<Integer> stk = allPlayerStacks.get(pid-1);
+        int cur = stk.peek();
+        boolean prime = isPrime(cur);
+        boolean green = random.nextDouble() < 0.9;
+        int val = random.nextInt(6)+1;
+        int step = green ? val : -val;
 
-        double chance = random.nextDouble();
+        Color dc = green ? UITheme.BUTTON_GREEN : UITheme.BUTTON_RED;
+        diceImageLabel.setIcon(createDiceImage(val, 100, dc));
+        diceTextLabel.setText((green?"MAJU":"MUNDUR") + " " + val + " Langkah");
+        diceTextLabel.setForeground(green ? Color.GREEN : Color.RED);
 
-        // MODIFIKASI: Dadu Hijau (Maju) lebih sering muncul (90%)
-        // Dadu Merah (Mundur) hanya 10%
-        boolean isGreen = chance < 0.9;
-
-        int diceValue = random.nextInt(6) + 1;
-        int steps = isGreen ? diceValue : -diceValue;
-
-        // --- UPDATE WARNA DADU BERDASARKAN HASIL ---
-        Color diceColor = isGreen ? new Color(0, 150, 0) : Color.RED;
-        diceImageLabel.setIcon(createDiceImage(diceValue, 80, diceColor));
-
-        String direction = isGreen ? "MAJU (Hijau)" : "MUNDUR (Merah)";
-        diceTextLabel.setText(direction + " " + diceValue + " Langkah");
-        diceTextLabel.setForeground(diceColor);
-
-        List<Integer> movementPath = generatePath(currentPos, steps);
-
-        int truncatedTarget = -1;
+        List<Integer> path = genPath(cur, step);
         int linkTarget = -1;
 
-        if (isGreen) {
-            for (int i = 0; i < movementPath.size(); i++) {
-                int node = movementPath.get(i);
-                if (shortcuts.containsKey(node)) {
-                    int distToLink = node - currentPos;
-                    if (startIsPrime && diceValue > distToLink) {
-                        truncatedTarget = node;
-                        linkTarget = shortcuts.get(node);
-                        movementPath = movementPath.subList(0, i + 1);
-                        break;
-                    }
+        if(green) {
+            for(int i=0; i<path.size(); i++) {
+                int n = path.get(i);
+                if(shortcuts.containsKey(n) && prime && val > (n-cur)) {
+                    linkTarget = shortcuts.get(n); path = path.subList(0, i+1); break;
                 }
             }
         }
 
-        final int targetShortcutStart = truncatedTarget;
-        final int targetShortcutEnd = linkTarget;
-        final List<Integer> finalPath = movementPath;
+        final List<Integer> finalPath = path;
+        final int finalLink = linkTarget;
 
-        animateSequence(currentPlayer, currentPos, finalPath, 0, () -> {
-            int finalDicePos = finalPath.isEmpty() ? currentPos : finalPath.get(finalPath.size()-1);
-            String logMsg = "P" + currentPlayer + ": " + currentPos + " -> " + finalDicePos;
-
-            boolean jumpActivated = false;
-
-            if (targetShortcutStart != -1 && finalDicePos == targetShortcutStart) {
-                jumpActivated = true;
-
+        animSeq(pid, cur, finalPath, 0, () -> {
+            int end = finalPath.isEmpty() ? cur : finalPath.get(finalPath.size()-1);
+            String log = playerNames[pid-1] + ": " + cur + " -> " + end;
+            if(finalLink != -1) {
                 SoundManager.play("magic.wav");
-
-                logMsg += " (OVERFLOW LINK -> " + targetShortcutEnd + ")";
-                JOptionPane.showMessageDialog(this, "PRIME OVERFLOW! Link Activated.");
-            }
-
-            final int actualFinalPos = jumpActivated ? targetShortcutEnd : finalDicePos;
-            final String finalLog = logMsg;
-
-            if (jumpActivated) {
-                javax.swing.Timer delay = new javax.swing.Timer(500, e -> {
-                    ((javax.swing.Timer)e.getSource()).stop();
-                    animateMove(currentPlayer, finalDicePos, actualFinalPos, () -> {
-                        finalizeTurn(currentPlayer, actualFinalPos, currentStack, finalLog);
-                    });
+                log += " (LINK -> "+finalLink+")";
+                showStyledInfoDialog("PRIME OVERFLOW!", "Shortest Path Activated!", false);
+                String finalLog = log;
+                javax.swing.Timer d = new javax.swing.Timer(500, ev -> {
+                    ((javax.swing.Timer)ev.getSource()).stop();
+                    animMove(pid, end, finalLink, () -> finalizeTurn(pid, finalLink, stk, finalLog));
                 });
-                delay.setRepeats(false);
-                delay.start();
+                d.setRepeats(false); d.start();
             } else {
-                finalizeTurn(currentPlayer, actualFinalPos, currentStack, finalLog);
+                finalizeTurn(pid, end, stk, log);
             }
         });
     }
 
-    private void animateSequence(int playerId, int currentVisPos, List<Integer> path, int index, Runnable onComplete) {
-        if (index >= path.size()) {
-            onComplete.run();
-            return;
-        }
-        int nextTarget = path.get(index);
-        animateMove(playerId, currentVisPos, nextTarget, () -> {
-            animateSequence(playerId, nextTarget, path, index + 1, onComplete);
-        });
+    private void animSeq(int pid, int cur, List<Integer> path, int idx, Runnable done) {
+        if(idx>=path.size()) { done.run(); return; }
+        int next = path.get(idx);
+        animMove(pid, cur, next, () -> animSeq(pid, next, path, idx+1, done));
     }
 
-    private void animateMove(int playerId, int startId, int endId, Runnable onComplete) {
-        if (startId == endId) { onComplete.run(); return; }
-
+    private void animMove(int pid, int s, int e, Runnable done) {
+        if(s==e) { done.run(); return; }
         SoundManager.play("step.wav");
+        GradientPanel ps = panelMap.get(s), pe = panelMap.get(e);
+        if(ps==null || pe==null) { done.run(); return; }
+        ps.removePlayer(pid);
+        Point p1 = SwingUtilities.convertPoint(ps, ps.getWidth()/2, ps.getHeight()/2, animationPanel);
+        Point p2 = SwingUtilities.convertPoint(pe, pe.getWidth()/2, pe.getHeight()/2, animationPanel);
 
-        GradientPanel startPanel = panelMap.get(startId);
-        GradientPanel endPanel = panelMap.get(endId);
-        if (startPanel == null || endPanel == null) { onComplete.run(); return; }
-
-        startPanel.removePlayer(playerId);
-
-        Point pStart = SwingUtilities.convertPoint(startPanel, startPanel.getWidth()/2, startPanel.getHeight()/2, animationPanel);
-        Point pEnd = SwingUtilities.convertPoint(endPanel, endPanel.getWidth()/2, endPanel.getHeight()/2, animationPanel);
-
-        final int frames = 40;
-        final int delay = 10;
-
-        javax.swing.Timer timer = new javax.swing.Timer(delay, null);
-        timer.addActionListener(new ActionListener() {
-            int currentFrame = 0;
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                currentFrame++;
-                float t = (float) currentFrame / frames;
-                t = t * t * (3f - 2f * t);
-
-                int curX = (int) (pStart.x + (pEnd.x - pStart.x) * t);
-                int curY = (int) (pStart.y + (pEnd.y - pStart.y) * t);
-
-                animationPanel.updatePawnPosition(playerId, curX, curY);
-
-                if (currentFrame >= frames) {
-                    ((javax.swing.Timer)e.getSource()).stop();
-                    endPanel.addPlayer(playerId);
-                    animationPanel.stopAnimation();
-                    onComplete.run();
-                }
+        final int frames = 30;
+        javax.swing.Timer t = new javax.swing.Timer(10, null);
+        t.addActionListener(new ActionListener() {
+            int f = 0;
+            public void actionPerformed(ActionEvent ev) {
+                f++; float r = (float)f/frames; r = r*r*(3-2*r);
+                int x = (int)(p1.x + (p2.x-p1.x)*r);
+                int y = (int)(p1.y + (p2.y-p1.y)*r);
+                animationPanel.updatePawn(pid, x, y);
+                if(f>=frames) { ((javax.swing.Timer)ev.getSource()).stop(); pe.addPlayer(pid); animationPanel.stop(); done.run(); }
             }
         });
-        timer.start();
+        t.start();
     }
 
-    private void finalizeTurn(int player, int finalPos, Stack<Integer> stack, String log) {
-        animationPanel.stopAnimation();
-        stack.push(finalPos);
+    private void finalizeTurn(int pid, int pos, Stack<Integer> stk, String log) {
+        animationPanel.stop(); stk.push(pos);
+        int pts = getPointOfNode(pos);
+        playerScores[pid-1] += pts;
+        log += " [+" + pts + " pts]";
+        historyArea.append(log+"\n");
+        scoreboardPanel.updateScores(playerScores);
+        updateGraphics();
 
-        int pointsGained = getPointOfNode(finalPos);
-        playerScores[player-1] += pointsGained;
-
-        log += " [+" + pointsGained + " pts]";
-        historyArea.append(log + "\n");
-        updateScoreLabel();
-        updatePlayerGraphics();
-
-        if (finalPos == 64) {
-            showEndGameDialog(player);
-            return;
+        if(pos==64) {
+            // SAVE HIGH SCORE
+            highScoreManager.saveScore(playerNames[pid-1], playerScores[pid-1]);
+            showCustomGameOverDialog(pid); return;
         }
 
-        if (finalPos % 5 == 0 && finalPos != 1) {
-            JOptionPane.showMessageDialog(this, "Kelipatan 5! Double Turn!");
-            turnQueue.addFirst(player);
+        if(pos%5==0 && pos!=1) {
+            showStyledInfoDialog("DOUBLE TURN!", "Kelipatan 5 detected.", false);
+            turnQueue.addFirst(pid);
         } else {
-            turnQueue.addLast(player);
+            turnQueue.addLast(pid);
         }
 
-        int nextPlayer = turnQueue.peekFirst();
-        statusLabel.setText("PLAYER " + nextPlayer + " TURN");
-        int colorIdx = (nextPlayer - 1) % playerTextColors.length;
-        statusLabel.setForeground(playerTextColors[colorIdx]);
-
-        rollButton.setEnabled(true);
-        rollButton.requestFocusInWindow();
+        int next = turnQueue.peekFirst();
+        statusLabel.setText(playerNames[next-1].toUpperCase() + " TURN");
+        statusLabel.setForeground(playerTextColors[(next-1)%playerTextColors.length]);
+        scoreboardPanel.highlight(next);
+        rollButton.setEnabled(true); rollButton.requestFocusInWindow();
     }
 
-    private void showEndGameDialog(int finisher) {
-        // PLAY AUDIO JOKOWI
+    private void showStyledInfoDialog(String title, String msg, boolean warn) {
+        JDialog d = new JDialog(this, true); d.setUndecorated(true); d.setBackground(new Color(0,0,0,0));
+        JPanel p = new JPanel(); p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBackground(UITheme.BG_DARK);
+        p.setBorder(new CompoundBorder(new LineBorder(warn?UITheme.BUTTON_RED:UITheme.ACCENT, 2), new EmptyBorder(20,20,20,20)));
+        JLabel t = new JLabel(title); t.setFont(AppFonts.BOLD.deriveFont(20f)); t.setForeground(warn?UITheme.BUTTON_RED:UITheme.ACCENT); t.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel m = new JLabel("<html><center>"+msg+"</center></html>"); m.setFont(AppFonts.REGULAR.deriveFont(14f)); m.setForeground(UITheme.TEXT_MAIN); m.setAlignmentX(CENTER_ALIGNMENT);
+        JButton b = styleButton("OK", UITheme.BUTTON_BLUE, Color.BLACK); b.setAlignmentX(CENTER_ALIGNMENT); b.addActionListener(e->d.dispose());
+        p.add(t); p.add(Box.createRigidArea(new Dimension(0,15))); p.add(m); p.add(Box.createRigidArea(new Dimension(0,20))); p.add(b);
+        d.add(p); d.pack(); d.setLocationRelativeTo(this); d.setVisible(true);
+    }
+
+    private void showPlayerSelectionDialog(Consumer<Integer> onSel) {
+        JDialog d = new JDialog(this, true); d.setUndecorated(true); d.setBackground(new Color(0,0,0,0));
+        JPanel p = new JPanel(new GridLayout(0,1,10,10)); p.setBackground(UITheme.BG_DARK);
+        p.setBorder(new CompoundBorder(new LineBorder(UITheme.BUTTON_GREEN, 2), new EmptyBorder(20,40,20,40)));
+        JLabel l = new JLabel("Pilih Jumlah Pemain"); l.setFont(AppFonts.BOLD.deriveFont(18f)); l.setForeground(Color.WHITE); l.setHorizontalAlignment(SwingConstants.CENTER);
+        p.add(l);
+        for(int i=2; i<=4; i++) {
+            int c = i; JButton b = styleButton(i+" Players", UITheme.BG_PANEL, Color.WHITE);
+            b.addActionListener(e->{ d.dispose(); onSel.accept(c); }); p.add(b);
+        }
+        d.add(p); d.pack(); d.setLocationRelativeTo(this); d.setVisible(true);
+    }
+
+    private void showRestartConfirmDialog(Runnable onYes) {
+        JDialog d = new JDialog(this, true); d.setUndecorated(true); d.setBackground(new Color(0,0,0,0));
+        JPanel c = new JPanel(); c.setLayout(new BoxLayout(c, BoxLayout.Y_AXIS)); c.setBackground(UITheme.BG_DARK);
+        c.setBorder(new CompoundBorder(new LineBorder(UITheme.BUTTON_RED, 2), new EmptyBorder(20,20,20,20)));
+        JLabel l = new JLabel("Ulangi Permainan?"); l.setFont(AppFonts.BOLD.deriveFont(16f)); l.setForeground(Color.WHITE); l.setAlignmentX(CENTER_ALIGNMENT);
+        JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 0)); bp.setOpaque(false);
+        JButton by = styleButton("Ya", UITheme.BUTTON_GREEN, Color.BLACK); by.addActionListener(e->{d.dispose(); onYes.run();});
+        JButton bn = styleButton("Batal", UITheme.BUTTON_RED, Color.BLACK); bn.addActionListener(e->d.dispose());
+        bp.add(by); bp.add(bn);
+        c.add(l); c.add(Box.createRigidArea(new Dimension(0,20))); c.add(bp);
+        d.add(c); d.pack(); d.setLocationRelativeTo(this); d.setVisible(true);
+    }
+
+    private void showCustomGameOverDialog(int fin) {
         SoundManager.play("hidup-jokowi.wav");
+        JDialog d = new JDialog(this, true); d.setUndecorated(true); d.setBackground(new Color(0,0,0,0));
+        JPanel m = new JPanel(); m.setLayout(new BoxLayout(m, BoxLayout.Y_AXIS)); m.setBackground(UITheme.BG_DARK);
+        m.setBorder(new CompoundBorder(new LineBorder(UITheme.ACCENT, 2), new EmptyBorder(20,30,20,30)));
+        JLabel h = new JLabel("GAME OVER!"); h.setFont(AppFonts.BOLD.deriveFont(32f)); h.setForeground(UITheme.BUTTON_RED); h.setAlignmentX(CENTER_ALIGNMENT);
+        JLabel s = new JLabel(playerNames[fin-1] + " Finished!"); s.setFont(AppFonts.REGULAR.deriveFont(16f)); s.setForeground(UITheme.TEXT_MAIN); s.setAlignmentX(CENTER_ALIGNMENT);
 
-        List<Integer> rank = new ArrayList<>();
-        for(int i=0; i<playerCount; i++) rank.add(i+1);
-        rank.sort((p1, p2) -> Integer.compare(playerScores[p2-1], playerScores[p1-1]));
+        List<Integer> rk = new ArrayList<>(); for(int i=0; i<playerCount; i++) rk.add(i+1);
+        rk.sort((p1,p2)->Integer.compare(playerScores[p2-1], playerScores[p1-1]));
 
-        StringBuilder msg = new StringBuilder();
-        msg.append("GAME OVER!\n");
-        msg.append("Player ").append(finisher).append(" reached Finish!\n\n");
-        msg.append("=== SCOREBOARD ===\n");
-
-        for(int i=0; i<rank.size(); i++) {
-            int pid = rank.get(i);
-            int score = playerScores[pid-1];
-            msg.append(i+1).append(". Player ").append(pid).append(" : ").append(score).append(" pts");
-            if(i==0) msg.append(" 🏆 (WINNER)");
-            msg.append("\n");
+        StringBuilder ht = new StringBuilder("<html><table style='width:300px; border-collapse:collapse;'>");
+        for(int i=0; i<rk.size(); i++) {
+            int pid = rk.get(i), sc = playerScores[pid-1];
+            String name = playerNames[pid-1];
+            String cl = (i==0)?"#A6E3A1":"#CDD6F4", md=(i==0)?"🏆":"";
+            ht.append(String.format("<tr><td style='padding:5px; color:%s; font-size:14px;'>#%d %s</td><td style='text-align:right; color:%s; font-weight:bold;'>%d pts %s</td></tr>", cl, i+1, name, cl, sc, md));
         }
+        ht.append("</table></html>");
+        JLabel tbl = new JLabel(ht.toString()); tbl.setAlignmentX(CENTER_ALIGNMENT);
 
-        JOptionPane.showMessageDialog(this, msg.toString(), "Final Results", JOptionPane.INFORMATION_MESSAGE);
-        statusLabel.setText("WINNER: PLAYER " + rank.get(0));
-        statusLabel.setForeground(Color.YELLOW);
+        JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 0)); bp.setOpaque(false);
+        JButton br = styleButton("Main Lagi", UITheme.BUTTON_GREEN, Color.BLACK); br.setPreferredSize(new Dimension(100,35));
+        br.addActionListener(e->{d.dispose(); askPlayerNames(); initGameData(); updateGraphics(); boardPanel.repaint();});
+        JButton be = styleButton("Keluar", UITheme.BUTTON_RED, Color.BLACK); be.setPreferredSize(new Dimension(100,35));
+        be.addActionListener(e->System.exit(0));
+        bp.add(br); bp.add(be);
+
+        m.add(h); m.add(Box.createRigidArea(new Dimension(0,10))); m.add(s); m.add(Box.createRigidArea(new Dimension(0,20)));
+        m.add(tbl); m.add(Box.createRigidArea(new Dimension(0,25))); m.add(bp);
+        d.add(m); d.pack(); d.setLocationRelativeTo(this); d.setVisible(true);
     }
 
-    private void updatePlayerGraphics() {
-        for (GradientPanel panel : panelMap.values()) {
-            panel.setPlayersHere(new ArrayList<>());
+    private boolean isPrime(int n) { if(n<=1)return false; for(int i=2; i*i<=n; i++) if(n%i==0) return false; return true; }
+    private int getPointOfNode(int id) { for(int r=0; r<SIZE; r++) for(int c=0; c<SIZE; c++) if(logicBoard[r][c].id==id) return logicBoard[r][c].pointValue; return 0; }
+
+    // LOGIC BARU: NO BOUNCE
+    private List<Integer> genPath(int s, int st) {
+        List<Integer> p = new ArrayList<>(); int c = s, m = Math.abs(st), d = st>0?1:-1;
+        for(int i=0; i<m; i++) {
+            // Jika sudah di 64, stop (win condition)
+            if(c == 64) break;
+            // Jika di 1 dan mundur, stop
+            if(c == 1 && d == -1) {}
+            else c += d;
+
+            p.add(c);
         }
-        Map<Integer, List<Integer>> positions = new HashMap<>();
-        for (int i = 0; i < playerCount; i++) {
-            int pId = i + 1;
-            int pos = allPlayerStacks.get(i).peek();
-            positions.putIfAbsent(pos, new ArrayList<>());
-            positions.get(pos).add(pId);
+        return p;
+    }
+
+    private void updateGraphics() {
+        for(GradientPanel p : panelMap.values()) p.setPlayersHere(new ArrayList<>());
+        Map<Integer, List<Integer>> pos = new HashMap<>();
+        for(int i=0; i<playerCount; i++) {
+            int pid = i+1, loc = allPlayerStacks.get(i).peek();
+            pos.putIfAbsent(loc, new ArrayList<>()); pos.get(loc).add(pid);
         }
-        for (Map.Entry<Integer, List<Integer>> entry : positions.entrySet()) {
-            GradientPanel panel = panelMap.get(entry.getKey());
-            if (panel != null) panel.setPlayersHere(entry.getValue());
-        }
+        for(Map.Entry<Integer, List<Integer>> e : pos.entrySet()) if(panelMap.containsKey(e.getKey())) panelMap.get(e.getKey()).setPlayersHere(e.getValue());
+    }
+
+    private JButton styleButton(String t, Color bg, Color fg) {
+        JButton b = new JButton(t); b.setFont(AppFonts.BOLD.deriveFont(18f)); b.setBackground(bg); b.setForeground(fg);
+        b.setFocusPainted(false); b.setBorderPainted(false); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.setContentAreaFilled(false); b.setOpaque(true);
+        b.addMouseListener(new MouseAdapter() { public void mouseEntered(MouseEvent e){b.setBackground(bg.brighter());} public void mouseExited(MouseEvent e){b.setBackground(bg);} });
+        return b;
+    }
+    private ImageIcon createDiceImage(int v, int s, Color c) {
+        BufferedImage i = new BufferedImage(s,s,2); Graphics2D g = i.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(new Color(0,0,0,50)); g.fillRoundRect(4,4,s-4,s-4,20,20);
+        g.setColor(Color.WHITE); g.fillRoundRect(0,0,s-4,s-4,20,20);
+        g.setColor(c); g.setStroke(new BasicStroke(4)); g.drawRoundRect(0,0,s-4,s-4,20,20);
+        g.setColor(Color.BLACK); int ds=s/5, m=s/2-2, l=s/4-2, r=s*3/4-2;
+        if(v%2!=0) g.fillOval(m-ds/2, m-ds/2, ds, ds);
+        if(v>=2){ g.fillOval(l-ds/2, l-ds/2, ds, ds); g.fillOval(r-ds/2, r-ds/2, ds, ds); }
+        if(v>=4){ g.fillOval(r-ds/2, l-ds/2, ds, ds); g.fillOval(l-ds/2, r-ds/2, ds, ds); }
+        if(v==6){ g.fillOval(l-ds/2, m-ds/2, ds, ds); g.fillOval(r-ds/2, m-ds/2, ds, ds); }
+        g.dispose(); return new ImageIcon(i);
     }
 
     public static void main(String[] args) {
-        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception ignored) {}
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch(Exception e){}
         SwingUtilities.invokeLater(() -> new SnakeDijkstraGUI().setVisible(true));
     }
 }
