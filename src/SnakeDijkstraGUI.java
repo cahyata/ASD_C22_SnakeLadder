@@ -600,21 +600,27 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     private void finalizeTurn(int pid, int pos, Stack<Integer> stk, String log) {
-        animationPanel.stop(); stk.push(pos);
+        animationPanel.stop();
+        stk.push(pos);
+
         int pts = getPointOfNode(pos);
         playerScores[pid-1] += pts;
+
         log += " [+" + pts + " pts]";
-        historyArea.append(log+"\n");
+        historyArea.append(log + "\n");
         scoreboardPanel.updateScores(playerScores);
         updateGraphics();
 
-        if(pos==64) {
-            // SAVE HIGH SCORE
+        if(pos == 64) {
+            // [FIX] SIMPAN SCORE DULU SEBELUM MUNCUL POPUP
             highScoreManager.saveScore(playerNames[pid-1], playerScores[pid-1]);
-            showCustomGameOverDialog(pid); return;
+
+            // Baru munculkan dialog
+            showCustomGameOverDialog(pid);
+            return;
         }
 
-        if(pos%5==0 && pos!=1) {
+        if(pos % 5 == 0 && pos != 1) {
             showStyledInfoDialog("DOUBLE TURN!", "Kelipatan 5 detected.", false);
             turnQueue.addFirst(pid);
         } else {
@@ -623,9 +629,11 @@ public class SnakeDijkstraGUI extends JFrame {
 
         int next = turnQueue.peekFirst();
         statusLabel.setText(playerNames[next-1].toUpperCase() + " TURN");
-        statusLabel.setForeground(playerTextColors[(next-1)%playerTextColors.length]);
+        statusLabel.setForeground(playerTextColors[(next-1) % playerTextColors.length]);
         scoreboardPanel.highlight(next);
-        rollButton.setEnabled(true); rollButton.requestFocusInWindow();
+
+        rollButton.setEnabled(true);
+        rollButton.requestFocusInWindow();
     }
 
     private void showStyledInfoDialog(String title, String msg, boolean warn) {
