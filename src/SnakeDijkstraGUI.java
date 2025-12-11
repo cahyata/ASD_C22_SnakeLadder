@@ -40,7 +40,7 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     // ==========================================
-    // 2. HIGH SCORE MANAGER (FILE I/O)
+    // 2. HIGH SCORE MANAGER
     // ==========================================
     public static class HighScoreManager {
         private static final String FILE_NAME = "snake_highscores.properties";
@@ -54,8 +54,7 @@ public class SnakeDijkstraGUI extends JFrame {
             try (FileInputStream fis = new FileInputStream(FILE_NAME)) {
                 scores.load(fis);
             } catch (IOException e) {
-                // File belum ada, abaikan
-                System.out.println("Highscore file not found, creating new one.");
+                System.out.println("Creating new highscore file.");
             }
         }
 
@@ -291,7 +290,6 @@ public class SnakeDijkstraGUI extends JFrame {
                 p.setBorder(new CompoundBorder(new LineBorder(GradientPanel.getPlayerColor(pid), 1, true), new EmptyBorder(5,10,5,10)));
                 p.setPreferredSize(new Dimension(130, 70));
 
-                // Name & Best
                 JPanel info = new JPanel(new GridLayout(2, 1));
                 info.setOpaque(false);
                 JLabel n = new JLabel(names[i]);
@@ -326,13 +324,14 @@ public class SnakeDijkstraGUI extends JFrame {
     private Node[][] logicBoard = new Node[SIZE][SIZE];
     private Map<Integer, GradientPanel> panelMap = new HashMap<>();
     private int playerCount = 2;
-    private String[] playerNames; // Nama pemain
+    private String[] playerNames;
     private List<Stack<Integer>> allPlayerStacks = new ArrayList<>();
     private int[] playerScores;
     private Deque<Integer> turnQueue = new ArrayDeque<>();
     private Map<Integer, Integer> shortcuts = new HashMap<>();
     private Random random = new Random();
-    private HighScoreManager highScoreManager; // Highscore System
+    private HighScoreManager highScoreManager;
+    private boolean inputEnabled = false; // FLAG INPUT
 
     // UI Components
     private CardLayout cardLayout;
@@ -340,7 +339,7 @@ public class SnakeDijkstraGUI extends JFrame {
     private AnimationPanel animationPanel;
     private JLabel statusLabel, diceImageLabel, diceTextLabel;
     private JTextArea historyArea;
-    private JButton rollButton, restartButton;
+    private JButton restartButton;
     private SportsScoreboardPanel scoreboardPanel;
 
     private final Color blueCenter = Color.decode("#E3F2FD"), blueEdge = Color.decode("#90CAF9");
@@ -349,7 +348,7 @@ public class SnakeDijkstraGUI extends JFrame {
 
     public SnakeDijkstraGUI() {
         UITheme.applyTheme();
-        highScoreManager = new HighScoreManager(); // Load scores
+        highScoreManager = new HighScoreManager();
         setTitle("Snake Game: Ultimate Edition");
         setSize(1280, 900);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -378,17 +377,31 @@ public class SnakeDijkstraGUI extends JFrame {
 
         b.addActionListener(e -> showPlayerSelectionDialog(count -> {
             playerCount = count;
-            askPlayerNames(); // Minta nama dulu
+            askPlayerNames();
             initGameData(); updateGraphics();
             cardLayout.show(mainContainer, "GAME");
             boardPanel.repaint();
-            getRootPane().setDefaultButton(rollButton);
-            rollButton.requestFocusInWindow();
+            // SETUP SHORTCUT ENTER FOR GAME
+            setupGameInput();
         }));
 
         card.add(t); card.add(t2); card.add(Box.createRigidArea(new Dimension(0, 10)));
         card.add(s); card.add(Box.createRigidArea(new Dimension(0, 40))); card.add(b);
         p.add(card); return p;
+    }
+
+    private void setupGameInput() {
+        // GLOBAL ENTER KEY BINDING FOR ROLLING DICE
+        InputMap im = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap am = getRootPane().getActionMap();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "ROLL_DICE");
+        am.put("ROLL_DICE", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // Only roll if input is enabled (not animating)
+                if (inputEnabled) playTurn();
+            }
+        });
     }
 
     private JPanel createGamePanel() {
@@ -410,18 +423,23 @@ public class SnakeDijkstraGUI extends JFrame {
         scoreboardPanel = new SportsScoreboardPanel(); scoreboardPanel.setAlignmentX(CENTER_ALIGNMENT);
 
         diceImageLabel = new JLabel(createDiceImage(1, 100, Color.BLACK)); diceImageLabel.setAlignmentX(CENTER_ALIGNMENT);
-        diceTextLabel = new JLabel("Press Enter to Roll"); diceTextLabel.setFont(AppFonts.REGULAR.deriveFont(14f));
-        diceTextLabel.setForeground(UITheme.TEXT_MAIN); diceTextLabel.setAlignmentX(CENTER_ALIGNMENT);
+        diceImageLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        diceImageLabel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (inputEnabled) playTurn();
+            }
+        });
 
-        rollButton = styleButton("ROLL DICE", UITheme.ACCENT, Color.BLACK);
-        rollButton.setAlignmentX(CENTER_ALIGNMENT); rollButton.setMaximumSize(new Dimension(280, 60));
-        rollButton.addActionListener(e -> playTurn());
+        diceTextLabel = new JLabel("Click Dice or Enter"); diceTextLabel.setFont(AppFonts.REGULAR.deriveFont(14f));
+        diceTextLabel.setForeground(UITheme.TEXT_MAIN); diceTextLabel.setAlignmentX(CENTER_ALIGNMENT);
 
         restartButton = styleButton("RESTART GAME", UITheme.BUTTON_RED, Color.BLACK);
         restartButton.setAlignmentX(CENTER_ALIGNMENT); restartButton.setMaximumSize(new Dimension(280, 45));
         restartButton.setFont(AppFonts.BOLD.deriveFont(14f));
+        restartButton.setFocusable(false); // CRITICAL: PREVENT ENTER KEY TRIGGER
         restartButton.addActionListener(e -> showRestartConfirmDialog(() -> {
-            askPlayerNames(); // Reset names optional, but good for restart
+            askPlayerNames();
             initGameData(); updateGraphics(); boardPanel.repaint();
         }));
 
@@ -435,7 +453,7 @@ public class SnakeDijkstraGUI extends JFrame {
         side.add(statusLabel); side.add(Box.createRigidArea(new Dimension(0, 15)));
         side.add(scoreboardPanel); side.add(Box.createRigidArea(new Dimension(0, 20)));
         side.add(diceImageLabel); side.add(diceTextLabel); side.add(Box.createRigidArea(new Dimension(0, 20)));
-        side.add(rollButton); side.add(Box.createRigidArea(new Dimension(0, 10)));
+        side.add(Box.createRigidArea(new Dimension(0, 20)));
         side.add(restartButton); side.add(Box.createRigidArea(new Dimension(0, 20)));
         side.add(sp);
 
@@ -461,17 +479,16 @@ public class SnakeDijkstraGUI extends JFrame {
             allPlayerStacks.add(s); playerScores[i] = 0;
         }
         turnQueue.clear(); for(int i=1; i<=playerCount; i++) turnQueue.add(i);
-        rollButton.setEnabled(true);
 
-        scoreboardPanel.init(playerCount, playerNames, highScoreManager); // Pass names & manager
+        inputEnabled = true; // Allow input
+        scoreboardPanel.init(playerCount, playerNames, highScoreManager);
         scoreboardPanel.updateScores(playerScores);
-
         historyArea.setText("Game Started!\n");
         statusLabel.setText(playerNames[0].toUpperCase() + " TURN");
         statusLabel.setForeground(playerTextColors[0]);
         scoreboardPanel.highlight(1); genShortcuts();
         diceImageLabel.setIcon(createDiceImage(1, 100, Color.BLACK));
-        diceTextLabel.setText("Roll to Start"); diceTextLabel.setForeground(UITheme.TEXT_MAIN);
+        diceTextLabel.setText("Click Dice or Enter"); diceTextLabel.setForeground(UITheme.TEXT_MAIN);
     }
 
     private void genShortcuts() {
@@ -511,7 +528,9 @@ public class SnakeDijkstraGUI extends JFrame {
 
     private void playTurn() {
         if(turnQueue.isEmpty()) return;
-        SoundManager.play("dice.wav"); rollButton.setEnabled(false);
+        inputEnabled = false; // Disable input
+        SoundManager.play("dice.wav");
+
         javax.swing.Timer t = new javax.swing.Timer(50, null);
         final int[] f = {0};
         t.addActionListener(e -> {
@@ -600,27 +619,20 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     private void finalizeTurn(int pid, int pos, Stack<Integer> stk, String log) {
-        animationPanel.stop();
-        stk.push(pos);
-
+        animationPanel.stop(); stk.push(pos);
         int pts = getPointOfNode(pos);
         playerScores[pid-1] += pts;
-
         log += " [+" + pts + " pts]";
-        historyArea.append(log + "\n");
+        historyArea.append(log+"\n");
         scoreboardPanel.updateScores(playerScores);
         updateGraphics();
 
-        if(pos == 64) {
-            // [FIX] SIMPAN SCORE DULU SEBELUM MUNCUL POPUP
+        if(pos==64) {
             highScoreManager.saveScore(playerNames[pid-1], playerScores[pid-1]);
-
-            // Baru munculkan dialog
-            showCustomGameOverDialog(pid);
-            return;
+            showCustomGameOverDialog(pid); return;
         }
 
-        if(pos % 5 == 0 && pos != 1) {
+        if(pos%5==0 && pos!=1) {
             showStyledInfoDialog("DOUBLE TURN!", "Kelipatan 5 detected.", false);
             turnQueue.addFirst(pid);
         } else {
@@ -629,11 +641,10 @@ public class SnakeDijkstraGUI extends JFrame {
 
         int next = turnQueue.peekFirst();
         statusLabel.setText(playerNames[next-1].toUpperCase() + " TURN");
-        statusLabel.setForeground(playerTextColors[(next-1) % playerTextColors.length]);
+        statusLabel.setForeground(playerTextColors[(next-1)%playerTextColors.length]);
         scoreboardPanel.highlight(next);
 
-        rollButton.setEnabled(true);
-        rollButton.requestFocusInWindow();
+        inputEnabled = true; // Re-enable input
     }
 
     private void showStyledInfoDialog(String title, String msg, boolean warn) {
@@ -714,12 +725,8 @@ public class SnakeDijkstraGUI extends JFrame {
     private List<Integer> genPath(int s, int st) {
         List<Integer> p = new ArrayList<>(); int c = s, m = Math.abs(st), d = st>0?1:-1;
         for(int i=0; i<m; i++) {
-            // Jika sudah di 64, stop (win condition)
-            if(c == 64) break;
-            // Jika di 1 dan mundur, stop
-            if(c == 1 && d == -1) {}
-            else c += d;
-
+            if(c == 64) break; // Finish Condition (Stop at 64)
+            if(c == 1 && d == -1) {} else c += d;
             p.add(c);
         }
         return p;
