@@ -545,7 +545,7 @@ public class SnakeDijkstraGUI extends JFrame {
         Stack<Integer> stk = allPlayerStacks.get(pid-1);
         int cur = stk.peek();
         boolean prime = isPrime(cur);
-        boolean green = random.nextDouble() < 0.9;
+        boolean green = random.nextDouble() < 0.7; // 70% Green
         int val = random.nextInt(6)+1;
         int step = green ? val : -val;
 
