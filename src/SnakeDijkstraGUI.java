@@ -327,8 +327,8 @@ public class SnakeDijkstraGUI extends JFrame {
     private String[] playerNames;
     private List<Stack<Integer>> allPlayerStacks = new ArrayList<>();
     private int[] playerScores;
-    private Deque<Integer> turnQueue = new ArrayDeque<>();
-    private Map<Integer, Integer> shortcuts = new HashMap<>();
+    private Deque<Integer> turnQueue = new ArrayDeque<>(); //GILIRAN: DEKLARASI QUEUE
+    private Map<Integer, Integer> shortcuts = new HashMap<>(); //BOARDS
     private Random random = new Random();
     private HighScoreManager highScoreManager;
     private boolean inputEnabled = false; // FLAG INPUT
@@ -541,10 +541,11 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     private void execLogic() {
-        int pid = turnQueue.pollFirst();
-        Stack<Integer> stk = allPlayerStacks.get(pid-1);
+        int pid = turnQueue.pollFirst(); //GILIRAN: AMBIL PEMAIN PALING DEPAN
+        Stack<Integer> stk = allPlayerStacks.get(pid-1); //RIWAYAT PERGERAKAN
         int cur = stk.peek();
         boolean prime = isPrime(cur);
+        //PROBABILISTIK DADU
         boolean green = random.nextDouble() < 0.7; // 70% Green
         int val = random.nextInt(6)+1;
         int step = green ? val : -val;
@@ -619,6 +620,7 @@ public class SnakeDijkstraGUI extends JFrame {
     }
 
     private void finalizeTurn(int pid, int pos, Stack<Integer> stk, String log) {
+        //RIWAYAT
         animationPanel.stop(); stk.push(pos);
         int pts = getPointOfNode(pos);
         playerScores[pid-1] += pts;
@@ -631,12 +633,13 @@ public class SnakeDijkstraGUI extends JFrame {
             highScoreManager.saveScore(playerNames[pid-1], playerScores[pid-1]);
             showCustomGameOverDialog(pid); return;
         }
-
+        //GILIRAN: PENGEMBALIAN GILIRAN
+        //DADU DOUBLE KALO KELIPATAN 5
         if(pos%5==0 && pos!=1) {
             showStyledInfoDialog("DOUBLE TURN!", "Kelipatan 5 detected.", false);
-            turnQueue.addFirst(pid);
+            turnQueue.addFirst(pid);//MASUKKAN KE DEPAN
         } else {
-            turnQueue.addLast(pid);
+            turnQueue.addLast(pid);//MASUKKAN KE BELAKANG
         }
 
         int next = turnQueue.peekFirst();
@@ -721,7 +724,7 @@ public class SnakeDijkstraGUI extends JFrame {
     private boolean isPrime(int n) { if(n<=1)return false; for(int i=2; i*i<=n; i++) if(n%i==0) return false; return true; }
     private int getPointOfNode(int id) { for(int r=0; r<SIZE; r++) for(int c=0; c<SIZE; c++) if(logicBoard[r][c].id==id) return logicBoard[r][c].pointValue; return 0; }
 
-    // LOGIC BARU: NO BOUNCE
+    // BOARDS (LOGIKA PERGERAKAN ANTAR NODE)
     private List<Integer> genPath(int s, int st) {
         List<Integer> p = new ArrayList<>(); int c = s, m = Math.abs(st), d = st>0?1:-1;
         for(int i=0; i<m; i++) {
